@@ -43,3 +43,5 @@ IOC Configs:
 
 - LDR -> ADC1
   - Mode: IN4
+  - Pins:
+    - PA4: AO
