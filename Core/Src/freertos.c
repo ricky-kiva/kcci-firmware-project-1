@@ -42,6 +42,12 @@ typedef struct {
 	uint16_t ldr;
 } sensor_data_t;
 
+typedef enum {
+	PAGE_RANDOM = 0,
+	PAGE_SEED,
+	PAGE_SENSOR
+} page_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -60,9 +66,14 @@ typedef struct {
 extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart2;
 
+osMessageQId SensorQueueHandle;
+
+volatile page_t currentPage = PAGE_RANDOM;
+
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
 osThreadId SensorTaskHandle;
+osThreadId RNGTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -74,14 +85,14 @@ DHT_Status DHT22_Read(int16_t *suhu, uint16_t *kelembapan);
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const *argument);
-void StartTaskSensor(void const *argument);
+void StartDefaultTask(void const * argument);
+void StartTaskSensor(void const * argument);
+void StartTaskRNG(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* GetIdleTaskMemory prototype (linked to static allocation support) */
-void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
-		StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize);
+void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize );
 
 /* USER CODE BEGIN GET_IDLE_TASK_MEMORY */
 static StaticTask_t xIdleTaskTCBBuffer;
@@ -97,43 +108,50 @@ void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
 /* USER CODE END GET_IDLE_TASK_MEMORY */
 
 /**
- * @brief  FreeRTOS initialization
- * @param  None
- * @retval None
- */
+  * @brief  FreeRTOS initialization
+  * @param  None
+  * @retval None
+  */
 void MX_FREERTOS_Init(void) {
-	/* USER CODE BEGIN Init */
+  /* USER CODE BEGIN Init */
 
-	/* USER CODE END Init */
+  /* USER CODE END Init */
 
-	/* USER CODE BEGIN RTOS_MUTEX */
+  /* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
-	/* USER CODE END RTOS_MUTEX */
+  /* USER CODE END RTOS_MUTEX */
 
-	/* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
 	/* add semaphores, ... */
-	/* USER CODE END RTOS_SEMAPHORES */
+  /* USER CODE END RTOS_SEMAPHORES */
 
-	/* USER CODE BEGIN RTOS_TIMERS */
+  /* USER CODE BEGIN RTOS_TIMERS */
 	/* start timers, add new ones, ... */
-	/* USER CODE END RTOS_TIMERS */
+  /* USER CODE END RTOS_TIMERS */
 
-	/* USER CODE BEGIN RTOS_QUEUES */
+  /* USER CODE BEGIN RTOS_QUEUES */
 	/* add queues, ... */
-	/* USER CODE END RTOS_QUEUES */
+  osMessageQDef(SensorQueue, 4, sensor_data_t);
+  SensorQueueHandle = osMessageCreate(osMessageQ(SensorQueue), NULL);
 
-	/* Create the thread(s) */
-	/* definition and creation of defaultTask */
-	osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
-	defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+  /* USER CODE END RTOS_QUEUES */
 
-	/* definition and creation of SensorTask */
-	osThreadDef(SensorTask, StartTaskSensor, osPriorityNormal, 0, 256);
-	SensorTaskHandle = osThreadCreate(osThread(SensorTask), NULL);
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
-	/* USER CODE BEGIN RTOS_THREADS */
+  /* definition and creation of SensorTask */
+  osThreadDef(SensorTask, StartTaskSensor, osPriorityNormal, 0, 256);
+  SensorTaskHandle = osThreadCreate(osThread(SensorTask), NULL);
+
+  /* definition and creation of RNGTask */
+  osThreadDef(RNGTask, StartTaskRNG, osPriorityAboveNormal, 0, 256);
+  RNGTaskHandle = osThreadCreate(osThread(RNGTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
-	/* USER CODE END RTOS_THREADS */
+  /* USER CODE END RTOS_THREADS */
 
 }
 
@@ -144,13 +162,14 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const *argument) {
-	/* USER CODE BEGIN StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN StartDefaultTask */
 	/* Infinite loop */
 	for (;;) {
 		osDelay(1);
 	}
-	/* USER CODE END StartDefaultTask */
+  /* USER CODE END StartDefaultTask */
 }
 
 /* USER CODE BEGIN Header_StartTaskSensor */
@@ -160,8 +179,9 @@ void StartDefaultTask(void const *argument) {
  * @retval None
  */
 /* USER CODE END Header_StartTaskSensor */
-void StartTaskSensor(void const *argument) {
-	/* USER CODE BEGIN StartTaskSensor */
+void StartTaskSensor(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskSensor */
 	sensor_data_t sensor;
 	DHT_Status dht_st;
 
@@ -169,6 +189,8 @@ void StartTaskSensor(void const *argument) {
 
 	/* Infinite loop */
 	for (;;) {
+    sensor = (sensor_data_t){0};
+
 		dht_st = DHT22_Read(&sensor.suhu, &sensor.kelembapan);
 
 		HAL_ADC_Start(&hadc1);
@@ -179,27 +201,58 @@ void StartTaskSensor(void const *argument) {
 
 		HAL_ADC_Stop(&hadc1);
 
-		if (dht_st == DHT_OK) {
-		    sprintf(uart_buf,
-          "Temp: %.1f C | Hum: %.1f %% | LDR: %u\r\n",
-          sensor.suhu / 10.0f,
-          sensor.kelembapan / 10.0f,
-          sensor.ldr);
-		} else {
-		    sprintf(uart_buf,
-          "DHT22 Error: %d | LDR: %u\r\n",
-          dht_st,
-          sensor.ldr);
-		}
-
-		HAL_UART_Transmit(&huart2,
-      (uint8_t *)uart_buf,
-      strlen(uart_buf),
-      HAL_MAX_DELAY);
+    osMessagePut(SensorQueueHandle, (uint32_t)&sensor, osWaitForever);
 
 		osDelay(2000);
 	}
-	/* USER CODE END StartTaskSensor */
+  /* USER CODE END StartTaskSensor */
+}
+
+/* USER CODE BEGIN Header_StartTaskRNG */
+/**
+* @brief Function implementing the RNGTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskRNG */
+void StartTaskRNG(void const * argument)
+{
+  osEvent event;
+  sensor_data_t *sensor;
+
+  uint32_t seed;
+  uint32_t random_num;
+  char uart_buf[100];
+
+  /* USER CODE BEGIN StartTaskRNG */
+  /* Infinite loop */
+  for(;;)
+  {
+    event = osMessageGet(SensorQueueHandle, osWaitForever);
+
+    if (event.status == osEventMessage) {
+      sensor = (sensor_data_t *)event.value.p;
+
+      seed = ((uint32_t)sensor->suhu << 16)
+        ^ ((uint32_t)sensor->kelembapan << 8)
+        ^ sensor->ldr
+        ^ HAL_GetTick();
+
+      srand(seed);
+      random_num = rand();
+
+      sprintf(uart_buf,
+        "Seed:%lu Random:%lu\r\n",
+        seed,
+        random_num);
+
+      HAL_UART_Transmit(&huart2,
+        (uint8_t *)uart_buf,
+        strlen(uart_buf),
+        HAL_MAX_DELAY);
+    }
+  }
+  /* USER CODE END StartTaskRNG */
 }
 
 /* Private application code --------------------------------------------------*/
