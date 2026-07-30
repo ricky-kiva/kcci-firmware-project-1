@@ -1,4 +1,4 @@
-Configs:
+IOC Configs:
 - UART -> USART2
   - Mode: Async
   - Baud Rate: 115200 B/s
@@ -12,3 +12,10 @@ Configs:
   - ARR: 1000 - 1
   - Pins:
     - PB0: Input
+
+- OLED -> I2C1
+  - Mode: I2C
+  - Speed: Fast Mode (400 kHz)
+  - Pins:
+    - PB6: SCL
+    - PB7: SDA
