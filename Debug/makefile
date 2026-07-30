@@ -61,7 +61,7 @@ main-build: Project_Mandiri.elf secondary-outputs
 
 # Tool invocations
 Project_Mandiri.elf Project_Mandiri.map: $(OBJS) $(USER_OBJS) D:\Learning\Embedded\ Systems\KCCI\STM32\ Workspace\Project_Mandiri\STM32F401CCUX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "Project_Mandiri.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Learning\Embedded Systems\KCCI\STM32 Workspace\Project_Mandiri\STM32F401CCUX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Project_Mandiri.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+	arm-none-eabi-gcc -o "Project_Mandiri.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Learning\Embedded Systems\KCCI\STM32 Workspace\Project_Mandiri\STM32F401CCUX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Project_Mandiri.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

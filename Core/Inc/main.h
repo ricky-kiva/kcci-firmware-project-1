@@ -61,6 +61,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define ENC_SW_Pin GPIO_PIN_0
 #define ENC_SW_GPIO_Port GPIOA
+#define DHT22_PIN_Pin GPIO_PIN_5
+#define DHT22_PIN_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 
