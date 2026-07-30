@@ -1,0 +1,9 @@
+../Core/Src/freertos.c:90:6:vApplicationGetIdleTaskMemory	1
+../Core/Src/freertos.c:104:6:MX_FREERTOS_Init	1
+../Core/Src/freertos.c:147:6:StartDefaultTask	1
+../Core/Src/freertos.c:163:6:StartTaskSensor	3
+../Core/Src/freertos.c:207:6:delay_us	2
+../Core/Src/freertos.c:217:6:Set_Pin_Output	1
+../Core/Src/freertos.c:227:6:Set_Pin_Input	1
+../Core/Src/freertos.c:237:19:DHT22_WaitPinState	3
+../Core/Src/freertos.c:251:12:DHT22_Read	11
