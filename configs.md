@@ -35,3 +35,11 @@ IOC Configs:
     - Pins:
       - PA0: SW  
 
+- DHT22 -> GPIO 
+  - Mode: Output
+  - Pull: Pull-up
+  - Pins:
+    - PA5: out
+
+- LDR -> ADC1
+  - Mode: IN4
