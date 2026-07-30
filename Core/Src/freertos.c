@@ -27,6 +27,8 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include "ssd1306.h"
+#include "ssd1306_fonts.h"
 
 /* USER CODE END Includes */
 
@@ -36,17 +38,25 @@ typedef enum {
 	DHT_OK = 0, DHT_ERR_TIMEOUT, DHT_ERR_CHECKSUM
 } DHT_Status;
 
+typedef enum {
+	PAGE_RANDOM = 0,
+	PAGE_SEED,
+	PAGE_SENSOR
+} page_t;
+
 typedef struct {
 	int16_t suhu;
 	uint16_t kelembapan;
 	uint16_t ldr;
 } sensor_data_t;
 
-typedef enum {
-	PAGE_RANDOM = 0,
-	PAGE_SEED,
-	PAGE_SENSOR
-} page_t;
+typedef struct {
+    uint32_t seed;
+    uint32_t random;
+    int16_t suhu;
+    uint16_t kelembapan;
+    uint16_t ldr;
+} display_data_t;
 
 /* USER CODE END PTD */
 
@@ -65,8 +75,10 @@ typedef enum {
 /* USER CODE BEGIN Variables */
 extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart2;
+extern TIM_HandleTypeDef htim3;
 
 osMessageQId SensorQueueHandle;
+osMessageQId DisplayQueueHandle;
 
 volatile page_t currentPage = PAGE_RANDOM;
 
@@ -74,6 +86,8 @@ volatile page_t currentPage = PAGE_RANDOM;
 osThreadId defaultTaskHandle;
 osThreadId SensorTaskHandle;
 osThreadId RNGTaskHandle;
+osThreadId RotaryPageTaskHandle;
+osThreadId DisplayTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -88,6 +102,8 @@ DHT_Status DHT22_Read(int16_t *suhu, uint16_t *kelembapan);
 void StartDefaultTask(void const * argument);
 void StartTaskSensor(void const * argument);
 void StartTaskRNG(void const * argument);
+void StartTaskRotaryPage(void const * argument);
+void StartTaskDisplay(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -134,6 +150,9 @@ void MX_FREERTOS_Init(void) {
   osMessageQDef(SensorQueue, 4, sensor_data_t);
   SensorQueueHandle = osMessageCreate(osMessageQ(SensorQueue), NULL);
 
+  osMessageQDef(DisplayQueue, 4, display_data_t);
+  DisplayQueueHandle = osMessageCreate(osMessageQ(DisplayQueue), NULL);
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -148,6 +167,14 @@ void MX_FREERTOS_Init(void) {
   /* definition and creation of RNGTask */
   osThreadDef(RNGTask, StartTaskRNG, osPriorityAboveNormal, 0, 256);
   RNGTaskHandle = osThreadCreate(osThread(RNGTask), NULL);
+
+  /* definition and creation of RotaryPageTask */
+  osThreadDef(RotaryPageTask, StartTaskRotaryPage, osPriorityNormal, 0, 128);
+  RotaryPageTaskHandle = osThreadCreate(osThread(RotaryPageTask), NULL);
+
+  /* definition and creation of DisplayTask */
+  osThreadDef(DisplayTask, StartTaskDisplay, osPriorityBelowNormal, 0, 256);
+  DisplayTaskHandle = osThreadCreate(osThread(DisplayTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
@@ -217,14 +244,15 @@ void StartTaskSensor(void const * argument)
 /* USER CODE END Header_StartTaskRNG */
 void StartTaskRNG(void const * argument)
 {
+  /* USER CODE BEGIN StartTaskRNG */
   osEvent event;
   sensor_data_t *sensor;
+  display_data_t display;
 
   uint32_t seed;
   uint32_t random_num;
   char uart_buf[100];
 
-  /* USER CODE BEGIN StartTaskRNG */
   /* Infinite loop */
   for(;;)
   {
@@ -241,18 +269,128 @@ void StartTaskRNG(void const * argument)
       srand(seed);
       random_num = rand();
 
-      sprintf(uart_buf,
-        "Seed:%lu Random:%lu\r\n",
-        seed,
-        random_num);
+      display.seed = seed;
+      display.random = random_num;
 
-      HAL_UART_Transmit(&huart2,
-        (uint8_t *)uart_buf,
-        strlen(uart_buf),
-        HAL_MAX_DELAY);
+      display.suhu = sensor->suhu;
+      display.kelembapan = sensor->kelembapan;
+      display.ldr = sensor->ldr;
+
+      osMessagePut(DisplayQueueHandle,
+        (uint32_t)&display,
+        osWaitForever);
     }
   }
   /* USER CODE END StartTaskRNG */
+}
+
+/* USER CODE BEGIN Header_StartTaskRotaryPage */
+/**
+* @brief Function implementing the RotaryPageTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskRotaryPage */
+void StartTaskRotaryPage(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskRotaryPage */
+    uint16_t lastCount;
+    uint16_t currentCount;
+
+    HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+
+    lastCount = __HAL_TIM_GET_COUNTER(&htim3);
+
+  /* Infinite loop */
+  for(;;)
+  {
+    currentCount = __HAL_TIM_GET_COUNTER(&htim3);
+
+    if (currentCount != lastCount) {
+      if ((int16_t)(currentCount - lastCount) > 0) {
+        /* Clockwise */
+        currentPage++;
+
+        if (currentPage > PAGE_SENSOR)
+          currentPage = PAGE_RANDOM;
+      } else {
+        /* Counter-clockwise */
+        if (currentPage == PAGE_RANDOM)
+          currentPage = PAGE_SENSOR;
+        else
+          currentPage--;
+      }
+
+      lastCount = currentCount;
+    }
+    
+    osDelay(10);
+  }
+  /* USER CODE END StartTaskRotaryPage */
+}
+
+/* USER CODE BEGIN Header_StartTaskDisplay */
+/**
+* @brief Function implementing the DisplayTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskDisplay */
+void StartTaskDisplay(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskDisplay */
+  osEvent event;
+  display_data_t *display;
+
+  char buf[32];
+
+  /* Infinite loop */
+  for(;;)
+  {
+    event = osMessageGet(DisplayQueueHandle, 0);
+
+    if (event.status == osEventMessage)
+      display = (display_data_t *)event.value.p;
+
+    ssd1306_Fill(Black);
+	  ssd1306_SetCursor(0, 0);
+
+    if (display != NULL) {
+
+      switch (currentPage) {
+        case PAGE_RANDOM:
+          ssd1306_WriteString("Random", Font_11x18, White);
+
+          ssd1306_SetCursor(0, 24);
+          sprintf(buf, "%lu", display->random);
+          ssd1306_WriteString(buf, Font_7x10, White);
+          break;
+        case PAGE_SEED:
+          ssd1306_WriteString("Seed", Font_11x18, White);
+
+          ssd1306_SetCursor(0, 24);
+          sprintf(buf, "%lu", display->seed);
+          ssd1306_WriteString(buf, Font_7x10, White);
+          break;
+        case PAGE_SENSOR:
+          sprintf(buf, "T : %d", display->suhu);
+          ssd1306_WriteString(buf, Font_7x10, White);
+
+          ssd1306_SetCursor(0, 16);
+          sprintf(buf, "H : %u", display->kelembapan);
+          ssd1306_WriteString(buf, Font_7x10, White);
+
+          ssd1306_SetCursor(0, 32);
+          sprintf(buf, "L : %u", display->ldr);
+          ssd1306_WriteString(buf, Font_7x10, White);
+          break;
+      }
+    }
+
+	  ssd1306_UpdateScreen();
+	  osDelay(50);
+  }
+  /* USER CODE END StartTaskDisplay */
 }
 
 /* Private application code --------------------------------------------------*/
