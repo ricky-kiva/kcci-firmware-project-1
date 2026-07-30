@@ -104,6 +104,7 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   ssd1306_Init();
+  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
   /* USER CODE END 2 */
 
