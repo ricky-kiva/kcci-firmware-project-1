@@ -14,7 +14,7 @@ IOC Configs:
   - Pins:
     - PB10: Input
 
-- OLED -> I2C1
+- OLED & EEPROM -> I2C1
   - Mode: I2C
   - Speed: Fast Mode (400 kHz)
   - Pins:
