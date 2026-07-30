@@ -25,6 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "queue.h"
 #include <stdio.h>
 #include <string.h>
 #include "ssd1306.h"
@@ -51,12 +52,17 @@ typedef struct {
 } sensor_data_t;
 
 typedef struct {
-    uint32_t seed;
-    uint32_t random;
-    int16_t suhu;
-    uint16_t kelembapan;
-    uint16_t ldr;
+  uint32_t seed;
+  uint32_t random;
+  int16_t suhu;
+  uint16_t kelembapan;
+  uint16_t ldr;
 } display_data_t;
+
+typedef struct {
+  uint32_t random;
+  uint32_t timestamp;
+} eeprom_data_t;
 
 /* USER CODE END PTD */
 
@@ -77,8 +83,9 @@ extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim3;
 
-osMessageQId SensorQueueHandle;
-osMessageQId DisplayQueueHandle;
+QueueHandle_t SensorQueueHandle;
+QueueHandle_t DisplayQueueHandle;
+QueueHandle_t EEPROMQueueHandle;
 
 volatile page_t currentPage = PAGE_RANDOM;
 
@@ -88,6 +95,7 @@ osThreadId SensorTaskHandle;
 osThreadId RNGTaskHandle;
 osThreadId RotaryPageTaskHandle;
 osThreadId DisplayTaskHandle;
+osSemaphoreId RNGSemaphoreHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -137,6 +145,11 @@ void MX_FREERTOS_Init(void) {
 	/* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* definition and creation of RNGSemaphore */
+  osSemaphoreDef(RNGSemaphore);
+  RNGSemaphoreHandle = osSemaphoreCreate(osSemaphore(RNGSemaphore), 1);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 	/* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -147,11 +160,9 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_QUEUES */
 	/* add queues, ... */
-  osMessageQDef(SensorQueue, 4, sensor_data_t);
-  SensorQueueHandle = osMessageCreate(osMessageQ(SensorQueue), NULL);
-
-  osMessageQDef(DisplayQueue, 4, display_data_t);
-  DisplayQueueHandle = osMessageCreate(osMessageQ(DisplayQueue), NULL);
+  SensorQueueHandle = xQueueCreate(1, sizeof(sensor_data_t));
+  DisplayQueueHandle = xQueueCreate(1, sizeof(display_data_t));
+  EEPROMQueueHandle = xQueueCreate(1, sizeof(eeprom_data_t));
 
   /* USER CODE END RTOS_QUEUES */
 
@@ -227,9 +238,7 @@ void StartTaskSensor(void const * argument)
 		}
 
 		HAL_ADC_Stop(&hadc1);
-
-    osMessagePut(SensorQueueHandle, (uint32_t)&sensor, osWaitForever);
-
+    xQueueOverwrite(SensorQueueHandle, &sensor);
 		osDelay(2000);
 	}
   /* USER CODE END StartTaskSensor */
@@ -245,8 +254,7 @@ void StartTaskSensor(void const * argument)
 void StartTaskRNG(void const * argument)
 {
   /* USER CODE BEGIN StartTaskRNG */
-  osEvent event;
-  sensor_data_t *sensor;
+  sensor_data_t sensor;
   display_data_t display;
 
   uint32_t seed;
@@ -256,30 +264,25 @@ void StartTaskRNG(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    event = osMessageGet(SensorQueueHandle, osWaitForever);
+    osSemaphoreWait(RNGSemaphoreHandle, osWaitForever);
+    xQueuePeek(SensorQueueHandle, &sensor, portMAX_DELAY);
 
-    if (event.status == osEventMessage) {
-      sensor = (sensor_data_t *)event.value.p;
+    seed = ((uint32_t)sensor.suhu << 16)
+      ^ ((uint32_t)sensor.kelembapan << 8)
+      ^ sensor.ldr
+      ^ HAL_GetTick();
 
-      seed = ((uint32_t)sensor->suhu << 16)
-        ^ ((uint32_t)sensor->kelembapan << 8)
-        ^ sensor->ldr
-        ^ HAL_GetTick();
+    srand(seed);
+    random_num = rand();
 
-      srand(seed);
-      random_num = rand();
+    display.seed = seed;
+    display.random = random_num;
 
-      display.seed = seed;
-      display.random = random_num;
+    display.suhu = sensor.suhu;
+    display.kelembapan = sensor.kelembapan;
+    display.ldr = sensor.ldr;
 
-      display.suhu = sensor->suhu;
-      display.kelembapan = sensor->kelembapan;
-      display.ldr = sensor->ldr;
-
-      osMessagePut(DisplayQueueHandle,
-        (uint32_t)&display,
-        osWaitForever);
-    }
+    xQueueOverwrite(DisplayQueueHandle, &display);
   }
   /* USER CODE END StartTaskRNG */
 }
@@ -297,6 +300,8 @@ void StartTaskRotaryPage(void const * argument)
     uint16_t lastCount;
     uint16_t currentCount;
 
+    GPIO_PinState lastButton = GPIO_PIN_SET;
+
     HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
     lastCount = __HAL_TIM_GET_COUNTER(&htim3);
@@ -304,6 +309,14 @@ void StartTaskRotaryPage(void const * argument)
   /* Infinite loop */
   for(;;)
   {
+    GPIO_PinState button = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
+
+    if (lastButton == GPIO_PIN_SET && button == GPIO_PIN_RESET) {
+      osSemaphoreRelease(RNGSemaphoreHandle);
+    }
+
+    lastButton = button;
+    
     currentCount = __HAL_TIM_GET_COUNTER(&htim3);
 
     if (currentCount != lastCount) {
@@ -339,52 +352,45 @@ void StartTaskRotaryPage(void const * argument)
 void StartTaskDisplay(void const * argument)
 {
   /* USER CODE BEGIN StartTaskDisplay */
-  osEvent event;
-  display_data_t *display;
+  display_data_t display;
 
   char buf[32];
 
   /* Infinite loop */
   for(;;)
   {
-    event = osMessageGet(DisplayQueueHandle, 0);
-
-    if (event.status == osEventMessage)
-      display = (display_data_t *)event.value.p;
+    xQueuePeek(DisplayQueueHandle, &display, 0);
 
     ssd1306_Fill(Black);
 	  ssd1306_SetCursor(0, 0);
 
-    if (display != NULL) {
+    switch (currentPage) {
+      case PAGE_RANDOM:
+        ssd1306_WriteString("Random", Font_11x18, White);
 
-      switch (currentPage) {
-        case PAGE_RANDOM:
-          ssd1306_WriteString("Random", Font_11x18, White);
+        ssd1306_SetCursor(0, 24);
+        sprintf(buf, "%lu", display.random);
+        ssd1306_WriteString(buf, Font_7x10, White);
+        break;
+      case PAGE_SEED:
+        ssd1306_WriteString("Seed", Font_11x18, White);
 
-          ssd1306_SetCursor(0, 24);
-          sprintf(buf, "%lu", display->random);
-          ssd1306_WriteString(buf, Font_7x10, White);
-          break;
-        case PAGE_SEED:
-          ssd1306_WriteString("Seed", Font_11x18, White);
+        ssd1306_SetCursor(0, 24);
+        sprintf(buf, "%lu", display.seed);
+        ssd1306_WriteString(buf, Font_7x10, White);
+        break;
+      case PAGE_SENSOR:
+        sprintf(buf, "T : %d", display.suhu);
+        ssd1306_WriteString(buf, Font_7x10, White);
 
-          ssd1306_SetCursor(0, 24);
-          sprintf(buf, "%lu", display->seed);
-          ssd1306_WriteString(buf, Font_7x10, White);
-          break;
-        case PAGE_SENSOR:
-          sprintf(buf, "T : %d", display->suhu);
-          ssd1306_WriteString(buf, Font_7x10, White);
+        ssd1306_SetCursor(0, 16);
+        sprintf(buf, "H : %u", display.kelembapan);
+        ssd1306_WriteString(buf, Font_7x10, White);
 
-          ssd1306_SetCursor(0, 16);
-          sprintf(buf, "H : %u", display->kelembapan);
-          ssd1306_WriteString(buf, Font_7x10, White);
-
-          ssd1306_SetCursor(0, 32);
-          sprintf(buf, "L : %u", display->ldr);
-          ssd1306_WriteString(buf, Font_7x10, White);
-          break;
-      }
+        ssd1306_SetCursor(0, 32);
+        sprintf(buf, "L : %u", display.ldr);
+        ssd1306_WriteString(buf, Font_7x10, White);
+        break;
     }
 
 	  ssd1306_UpdateScreen();
