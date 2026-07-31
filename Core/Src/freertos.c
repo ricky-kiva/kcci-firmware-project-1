@@ -47,8 +47,7 @@ typedef enum {
 typedef enum {
 	PAGE_DICE = 0,
   PAGE_COIN,
-	PAGE_SEED,
-	PAGE_SENSOR,
+	PAGE_INFOS,
   PAGE_HISTORY
 } page_t;
 
@@ -456,41 +455,44 @@ void StartTaskDisplay(void const * argument)
         OLED_DrawCoin((display.mode == MODE_COIN) ? display.value : 0, 0);
         break;
 
-      case PAGE_SEED:
-        ssd1306_WriteString("Seed", Font_11x18, White);
+      case PAGE_INFOS:
+        ssd1306_SetCursor(0, 0);
+        ssd1306_WriteString("INFO PAGE", Font_6x8, White);
 
-        ssd1306_SetCursor(0,24);
-        sprintf(buf,"%lu", display.seed);
-        ssd1306_WriteString(buf, Font_7x10, White);
-        break;
+        sprintf(buf, "Temp: %d.%d C", sensor.suhu / 10, abs(sensor.suhu) % 10);
+        ssd1306_SetCursor(0, 15);
+        ssd1306_WriteString(buf, Font_6x8, White);
 
-      case PAGE_SENSOR:
-        sprintf(buf,"T : %d", sensor.suhu);
-        ssd1306_WriteString(buf, Font_7x10, White);
+        sprintf(buf, "Humid: %u.%u %%", sensor.kelembapan / 10, sensor.kelembapan % 10);
+        ssd1306_SetCursor(0, 24);
+        ssd1306_WriteString(buf, Font_6x8, White);
 
-        ssd1306_SetCursor(0,16);
-        sprintf(buf,"H : %u", sensor.kelembapan);
-        ssd1306_WriteString(buf, Font_7x10, White);
+        sprintf(buf, "LDR: %u Raw", sensor.ldr);
+        ssd1306_SetCursor(0, 33);
+        ssd1306_WriteString(buf, Font_6x8, White);
 
-        ssd1306_SetCursor(0,32);
-        sprintf(buf,"L : %u", sensor.ldr);
-        ssd1306_WriteString(buf, Font_7x10, White);
+        sprintf(buf, "Seed: %lu", display.seed);
+        ssd1306_SetCursor(0, 42);
+        ssd1306_WriteString(buf, Font_6x8, White);
+
+        ssd1306_SetCursor(0, 56);
+        ssd1306_WriteString("(C) Rickyslash 2026", Font_6x8, White); 
         break;
       
       case PAGE_HISTORY:
-        ssd1306_WriteString("Gen. History", Font_7x10, White);
+        ssd1306_WriteString("HISTORY (RNG)", Font_6x8, White);
         for(int i = 0; i < history_count; i++) {
             const char *m;
 
             switch (history_cache[i].mode) {
               case MODE_DICE:
-                  m = "DICE";
+                  m = "Dice";
                   break;
               case MODE_COIN:
-                  m = "COIN";
+                  m = "Coin";
                   break;
               default:
-                  m = "DEF.";
+                  m = "????";
                   break;
             }
 
@@ -499,16 +501,26 @@ void StartTaskDisplay(void const * argument)
             uint32_t minutes = (total_seconds % 3600) / 60;
             uint32_t seconds = total_seconds % 60;
 
-            sprintf(buf,
-              "%s: %d | %02lu:%02lu:%02lu",
-              m,
-              history_cache[i].value,
-              (unsigned long)hours,
-              (unsigned long)minutes,
-              (unsigned long)seconds);
+            if (history_cache[i].mode == MODE_COIN) {
+              sprintf(buf,
+                "%s: %c | %02lu:%02lu:%02lu",
+                m,
+                history_cache[i].value ? 'H' : 'T',
+                (unsigned long)hours,
+                (unsigned long)minutes,
+                (unsigned long)seconds);
+            } else {
+              sprintf(buf,
+                "%s: %d | %02lu:%02lu:%02lu",
+                m,
+                history_cache[i].value,
+                (unsigned long)hours,
+                (unsigned long)minutes,
+                (unsigned long)seconds);
+            }
             
-            ssd1306_SetCursor(0, 14 + (i * 10));
-            ssd1306_WriteString(buf, Font_7x10, White);
+            ssd1306_SetCursor(0, 15 + (i * 9));
+            ssd1306_WriteString(buf, Font_6x8, White);
         }
         break;
     }
