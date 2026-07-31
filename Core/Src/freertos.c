@@ -101,6 +101,7 @@ extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim3;
 extern I2C_HandleTypeDef hi2c1;
+extern TIM_HandleTypeDef htim2;
 
 QueueHandle_t SensorQueueHandle;
 QueueHandle_t DisplayQueueHandle;
@@ -292,12 +293,28 @@ void StartTaskRNG(void const * argument)
   eeprom_data_t eeprom;
 
   uint32_t seed;
-  char uart_buf[100];
 
   /* Infinite loop */
   for(;;)
   {
     osSemaphoreWait(RNGSemaphoreHandle, osWaitForever);
+
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
+
+    __HAL_TIM_SET_AUTORELOAD(&htim2, 1000);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 500); 
+    osDelay(40);
+
+    __HAL_TIM_SET_AUTORELOAD(&htim2, 750);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 375); 
+    osDelay(40);
+
+    __HAL_TIM_SET_AUTORELOAD(&htim2, 500);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 250); 
+    osDelay(80);
+
+    HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_3);
+
     xQueuePeek(SensorQueueHandle, &sensor, portMAX_DELAY);
 
     seed = ((uint32_t)sensor.suhu << 16)
