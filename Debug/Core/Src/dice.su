@@ -1,0 +1,2 @@
+../Core/Src/dice.c:8:6:OLED_DrawDice	64	static
+../Core/Src/dice.c:66:6:OLED_AnimateDice	32	static

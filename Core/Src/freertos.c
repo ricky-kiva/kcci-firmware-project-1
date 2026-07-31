@@ -28,22 +28,37 @@
 #include "queue.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
+#include "dice.h"
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef enum {
-	DHT_OK = 0, DHT_ERR_TIMEOUT, DHT_ERR_CHECKSUM
+	DHT_OK = 0, 
+  DHT_ERR_TIMEOUT, 
+  DHT_ERR_CHECKSUM
 } DHT_Status;
 
 typedef enum {
-	PAGE_RANDOM = 0,
+	PAGE_GENERATOR = 0,
 	PAGE_SEED,
 	PAGE_SENSOR
 } page_t;
+
+typedef enum {
+  MODE_DICE = 0,
+  MODE_COIN
+} generator_mode_t;
+
+typedef enum {
+  ANIM_NONE,
+  ANIM_DICE,
+  ANIM_COIN
+} animation_t;
 
 typedef struct {
 	int16_t suhu;
@@ -52,11 +67,12 @@ typedef struct {
 } sensor_data_t;
 
 typedef struct {
-  uint32_t seed;
-  uint32_t random;
-  int16_t suhu;
-  uint16_t kelembapan;
-  uint16_t ldr;
+    generator_mode_t mode;
+    uint32_t seed;
+    uint32_t value;
+    int16_t suhu;
+    uint16_t kelembapan;
+    uint16_t ldr;
 } display_data_t;
 
 typedef struct {
@@ -87,7 +103,9 @@ QueueHandle_t SensorQueueHandle;
 QueueHandle_t DisplayQueueHandle;
 QueueHandle_t EEPROMQueueHandle;
 
-volatile page_t currentPage = PAGE_RANDOM;
+volatile page_t currentPage = PAGE_GENERATOR;
+volatile generator_mode_t currentMode = MODE_DICE;
+volatile animation_t currentAnimation = ANIM_NONE;
 
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
@@ -234,8 +252,6 @@ void StartTaskSensor(void const * argument)
 	sensor_data_t sensor;
 	DHT_Status dht_st;
 
-	char uart_buf[100];
-
 	/* Infinite loop */
 	for (;;) {
     sensor = (sensor_data_t){0};
@@ -270,7 +286,6 @@ void StartTaskRNG(void const * argument)
   eeprom_data_t eeprom;
 
   uint32_t seed;
-  uint32_t random_num;
   char uart_buf[100];
 
   /* Infinite loop */
@@ -285,17 +300,36 @@ void StartTaskRNG(void const * argument)
       ^ HAL_GetTick();
 
     srand(seed);
-    random_num = rand();
+    
+    switch(currentMode) {
+      case MODE_DICE:
+        display.value = (rand() % 6) + 1;
+        break;
+      case MODE_COIN:
+        display.value = rand() & 1;
+        break;
+    }
 
+    display.mode = currentMode;
     display.seed = seed;
-    display.random = random_num;
 
-    eeprom.random = random_num;
+    eeprom.random = display.value;
     eeprom.timestamp = HAL_GetTick();
 
     xQueueOverwrite(DisplayQueueHandle, &display);
     xQueueOverwrite(EEPROMQueueHandle, &eeprom);
-  }
+
+    switch(currentMode) {
+      case MODE_DICE:
+          currentAnimation = ANIM_DICE;
+          break;
+      case MODE_COIN:
+          currentAnimation = ANIM_COIN;
+          break;
+      default:
+          currentAnimation = ANIM_NONE;
+      }
+    }
   /* USER CODE END StartTaskRNG */
 }
 
@@ -337,10 +371,10 @@ void StartTaskRotaryPage(void const * argument)
         currentPage++;
 
         if (currentPage > PAGE_SENSOR)
-          currentPage = PAGE_RANDOM;
+          currentPage = PAGE_GENERATOR;
       } else {
         /* Counter-clockwise */
-        if (currentPage == PAGE_RANDOM)
+        if (currentPage == PAGE_GENERATOR)
           currentPage = PAGE_SENSOR;
         else
           currentPage--;
@@ -375,16 +409,19 @@ void StartTaskDisplay(void const * argument)
     xQueuePeek(DisplayQueueHandle, &display, 0);
     xQueuePeek(SensorQueueHandle, &sensor, 0);
 
+    if (currentAnimation == ANIM_DICE && currentPage == PAGE_GENERATOR) {
+      OLED_AnimateDice(display.value);
+      currentAnimation = ANIM_NONE;
+    }
+
     ssd1306_Fill(Black);
 	  ssd1306_SetCursor(0, 0);
 
     switch(currentPage) {
-      case PAGE_RANDOM:
-        ssd1306_WriteString("Random", Font_11x18, White);
-
-        ssd1306_SetCursor(0,24);
-        sprintf(buf,"%lu", display.random);
-        ssd1306_WriteString(buf, Font_7x10, White);
+      case PAGE_GENERATOR:
+        if (display.mode == MODE_DICE) {
+          OLED_DrawDice(display.value, 0, 0);
+        }
         break;
 
       case PAGE_SEED:
