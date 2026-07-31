@@ -95,6 +95,8 @@ osThreadId SensorTaskHandle;
 osThreadId RNGTaskHandle;
 osThreadId RotaryPageTaskHandle;
 osThreadId DisplayTaskHandle;
+osThreadId EEPROMTaskHandle;
+osMutexId I2CMutexHandle;
 osSemaphoreId RNGSemaphoreHandle;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -112,6 +114,7 @@ void StartTaskSensor(void const * argument);
 void StartTaskRNG(void const * argument);
 void StartTaskRotaryPage(void const * argument);
 void StartTaskDisplay(void const * argument);
+void StartTaskEEPROM(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -140,6 +143,10 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
+  /* Create the mutex(es) */
+  /* definition and creation of I2CMutex */
+  osMutexDef(I2CMutex);
+  I2CMutexHandle = osMutexCreate(osMutex(I2CMutex));
 
   /* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
@@ -186,6 +193,10 @@ void MX_FREERTOS_Init(void) {
   /* definition and creation of DisplayTask */
   osThreadDef(DisplayTask, StartTaskDisplay, osPriorityBelowNormal, 0, 256);
   DisplayTaskHandle = osThreadCreate(osThread(DisplayTask), NULL);
+
+  /* definition and creation of EEPROMTask */
+  osThreadDef(EEPROMTask, StartTaskEEPROM, osPriorityBelowNormal, 0, 256);
+  EEPROMTaskHandle = osThreadCreate(osThread(EEPROMTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
@@ -256,6 +267,7 @@ void StartTaskRNG(void const * argument)
   /* USER CODE BEGIN StartTaskRNG */
   sensor_data_t sensor;
   display_data_t display;
+  eeprom_data_t eeprom;
 
   uint32_t seed;
   uint32_t random_num;
@@ -278,11 +290,11 @@ void StartTaskRNG(void const * argument)
     display.seed = seed;
     display.random = random_num;
 
-    display.suhu = sensor.suhu;
-    display.kelembapan = sensor.kelembapan;
-    display.ldr = sensor.ldr;
+    eeprom.random = random_num;
+    eeprom.timestamp = HAL_GetTick();
 
     xQueueOverwrite(DisplayQueueHandle, &display);
+    xQueueOverwrite(EEPROMQueueHandle, &eeprom);
   }
   /* USER CODE END StartTaskRNG */
 }
@@ -353,6 +365,7 @@ void StartTaskDisplay(void const * argument)
 {
   /* USER CODE BEGIN StartTaskDisplay */
   display_data_t display;
+  sensor_data_t sensor;
 
   char buf[32];
 
@@ -360,35 +373,38 @@ void StartTaskDisplay(void const * argument)
   for(;;)
   {
     xQueuePeek(DisplayQueueHandle, &display, 0);
+    xQueuePeek(SensorQueueHandle, &sensor, 0);
 
     ssd1306_Fill(Black);
 	  ssd1306_SetCursor(0, 0);
 
-    switch (currentPage) {
+    switch(currentPage) {
       case PAGE_RANDOM:
         ssd1306_WriteString("Random", Font_11x18, White);
 
-        ssd1306_SetCursor(0, 24);
-        sprintf(buf, "%lu", display.random);
+        ssd1306_SetCursor(0,24);
+        sprintf(buf,"%lu", display.random);
         ssd1306_WriteString(buf, Font_7x10, White);
         break;
+
       case PAGE_SEED:
         ssd1306_WriteString("Seed", Font_11x18, White);
 
-        ssd1306_SetCursor(0, 24);
-        sprintf(buf, "%lu", display.seed);
+        ssd1306_SetCursor(0,24);
+        sprintf(buf,"%lu", display.seed);
         ssd1306_WriteString(buf, Font_7x10, White);
         break;
+
       case PAGE_SENSOR:
-        sprintf(buf, "T : %d", display.suhu);
+        sprintf(buf,"T : %d", sensor.suhu);
         ssd1306_WriteString(buf, Font_7x10, White);
 
-        ssd1306_SetCursor(0, 16);
-        sprintf(buf, "H : %u", display.kelembapan);
+        ssd1306_SetCursor(0,16);
+        sprintf(buf,"H : %u", sensor.kelembapan);
         ssd1306_WriteString(buf, Font_7x10, White);
 
-        ssd1306_SetCursor(0, 32);
-        sprintf(buf, "L : %u", display.ldr);
+        ssd1306_SetCursor(0,32);
+        sprintf(buf,"L : %u", sensor.ldr);
         ssd1306_WriteString(buf, Font_7x10, White);
         break;
     }
@@ -397,6 +413,24 @@ void StartTaskDisplay(void const * argument)
 	  osDelay(50);
   }
   /* USER CODE END StartTaskDisplay */
+}
+
+/* USER CODE BEGIN Header_StartTaskEEPROM */
+/**
+* @brief Function implementing the EEPROMTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskEEPROM */
+void StartTaskEEPROM(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskEEPROM */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartTaskEEPROM */
 }
 
 /* Private application code --------------------------------------------------*/
