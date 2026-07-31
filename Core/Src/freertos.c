@@ -46,7 +46,8 @@ typedef enum {
 typedef enum {
 	PAGE_GENERATOR = 0,
 	PAGE_SEED,
-	PAGE_SENSOR
+	PAGE_SENSOR,
+  PAGE_HISTORY
 } page_t;
 
 typedef enum {
@@ -76,7 +77,8 @@ typedef struct {
 } display_data_t;
 
 typedef struct {
-  uint32_t random;
+  generator_mode_t mode;
+  uint8_t value;
   uint32_t timestamp;
 } eeprom_data_t;
 
@@ -98,6 +100,7 @@ typedef struct {
 extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim3;
+extern I2C_HandleTypeDef hi2c1;
 
 QueueHandle_t SensorQueueHandle;
 QueueHandle_t DisplayQueueHandle;
@@ -106,6 +109,9 @@ QueueHandle_t EEPROMQueueHandle;
 volatile page_t currentPage = PAGE_GENERATOR;
 volatile generator_mode_t currentMode = MODE_DICE;
 volatile animation_t currentAnimation = ANIM_NONE;
+
+eeprom_data_t history_cache[5];
+uint8_t history_count = 0;
 
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
@@ -313,7 +319,8 @@ void StartTaskRNG(void const * argument)
     display.mode = currentMode;
     display.seed = seed;
 
-    eeprom.random = display.value;
+    eeprom.mode = currentMode;
+    eeprom.value = (uint8_t)display.value;
     eeprom.timestamp = HAL_GetTick();
 
     xQueueOverwrite(DisplayQueueHandle, &display);
@@ -358,11 +365,12 @@ void StartTaskRotaryPage(void const * argument)
     GPIO_PinState button = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 
     if (lastButton == GPIO_PIN_SET && button == GPIO_PIN_RESET) {
-      osSemaphoreRelease(RNGSemaphoreHandle);
+      if (currentPage == PAGE_GENERATOR) {
+        osSemaphoreRelease(RNGSemaphoreHandle);
+      }
     }
 
     lastButton = button;
-    
     currentCount = __HAL_TIM_GET_COUNTER(&htim3);
 
     if (currentCount != lastCount) {
@@ -370,12 +378,12 @@ void StartTaskRotaryPage(void const * argument)
         /* Clockwise */
         currentPage++;
 
-        if (currentPage > PAGE_SENSOR)
+        if (currentPage > PAGE_HISTORY)
           currentPage = PAGE_GENERATOR;
       } else {
         /* Counter-clockwise */
         if (currentPage == PAGE_GENERATOR)
-          currentPage = PAGE_SENSOR;
+          currentPage = PAGE_HISTORY;
         else
           currentPage--;
       }
@@ -444,9 +452,47 @@ void StartTaskDisplay(void const * argument)
         sprintf(buf,"L : %u", sensor.ldr);
         ssd1306_WriteString(buf, Font_7x10, White);
         break;
+      
+      case PAGE_HISTORY:
+        ssd1306_WriteString("Gen. History", Font_7x10, White);
+        for(int i = 0; i < history_count; i++) {
+            const char *m;
+
+            switch (history_cache[i].mode) {
+              case MODE_DICE:
+                  m = "DICE";
+                  break;
+              case MODE_COIN:
+                  m = "COIN";
+                  break;
+              default:
+                  m = "DEF.";
+                  break;
+            }
+
+            uint32_t total_seconds = history_cache[i].timestamp / 1000;
+            uint32_t hours   = total_seconds / 3600;
+            uint32_t minutes = (total_seconds % 3600) / 60;
+            uint32_t seconds = total_seconds % 60;
+
+            sprintf(buf,
+              "%s: %d | %02lu:%02lu:%02lu",
+              m,
+              history_cache[i].value,
+              (unsigned long)hours,
+              (unsigned long)minutes,
+              (unsigned long)seconds);
+            
+            ssd1306_SetCursor(0, 14 + (i * 10));
+            ssd1306_WriteString(buf, Font_7x10, White);
+        }
+        break;
     }
 
+    osMutexWait(I2CMutexHandle, osWaitForever);
 	  ssd1306_UpdateScreen();
+    osMutexRelease(I2CMutexHandle);
+
 	  osDelay(50);
   }
   /* USER CODE END StartTaskDisplay */
@@ -462,10 +508,81 @@ void StartTaskDisplay(void const * argument)
 void StartTaskEEPROM(void const * argument)
 {
   /* USER CODE BEGIN StartTaskEEPROM */
+  eeprom_data_t eeprom;
+
+  uint8_t header[2] = {0, 0}; 
+  uint8_t current_index = 0;
+  uint8_t total_count = 0;
+  
+  const uint8_t EEPROM_ADDR = 0xA0;
+  const uint8_t MAX_RECORDS = 23;
+
+  osMutexWait(I2CMutexHandle, osWaitForever);
+  HAL_I2C_Mem_Read(&hi2c1, EEPROM_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT, header, 2, 100);
+  osMutexRelease(I2CMutexHandle);
+
+  current_index = header[0];
+  total_count = header[1];
+
+  if (current_index >= MAX_RECORDS || total_count > MAX_RECORDS) {
+      current_index = 0;
+      total_count = 0;
+  }
+
+  history_count = (total_count < 5) ? total_count : 5;
+
+  uint8_t read_idx = current_index;
+
+  for (int i = 0; i < history_count; i++) {
+    read_idx = (read_idx == 0) ? (MAX_RECORDS - 1) : (read_idx - 1);
+    
+    uint8_t read_buf[8];
+    osMutexWait(I2CMutexHandle, osWaitForever);
+    HAL_I2C_Mem_Read(&hi2c1, EEPROM_ADDR, 8 + (read_idx * 8), I2C_MEMADD_SIZE_8BIT, read_buf, 8, 100);
+    osMutexRelease(I2CMutexHandle);
+
+    history_cache[i].mode = (generator_mode_t)read_buf[0];
+    history_cache[i].value = read_buf[1];
+    history_cache[i].timestamp = ((uint32_t)read_buf[2] << 24) | ((uint32_t)read_buf[3] << 16) | ((uint32_t)read_buf[4] << 8) | read_buf[5];
+  }
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    if (xQueueReceive(EEPROMQueueHandle, &eeprom, portMAX_DELAY) == pdTRUE) {
+      uint8_t write_buf[8] = {0};
+      write_buf[0] = (uint8_t)eeprom.mode;
+      write_buf[1] = eeprom.value;
+      write_buf[2] = (eeprom.timestamp >> 24) & 0xFF;
+      write_buf[3] = (eeprom.timestamp >> 16) & 0xFF;
+      write_buf[4] = (eeprom.timestamp >> 8) & 0xFF;
+      write_buf[5] = eeprom.timestamp & 0xFF;
+
+      uint16_t mem_addr = 8 + (current_index * 8);
+
+      osMutexWait(I2CMutexHandle, osWaitForever);
+      HAL_I2C_Mem_Write(&hi2c1, EEPROM_ADDR, mem_addr, I2C_MEMADD_SIZE_8BIT, write_buf, 8, 100);
+      osMutexRelease(I2CMutexHandle);
+      osDelay(5);
+
+      current_index++;
+      if (current_index >= MAX_RECORDS) current_index = 0;
+      if (total_count < MAX_RECORDS) total_count++;
+
+      header[0] = current_index;
+      header[1] = total_count;
+      
+      osMutexWait(I2CMutexHandle, osWaitForever);
+      HAL_I2C_Mem_Write(&hi2c1, EEPROM_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT, header, 2, 100);
+      osMutexRelease(I2CMutexHandle);
+      osDelay(5);
+
+      if (history_count < 5) history_count++;
+      for(int i = history_count - 1; i > 0; i--) {
+          history_cache[i] = history_cache[i-1];
+      }
+
+      history_cache[0] = eeprom;
+    }
   }
   /* USER CODE END StartTaskEEPROM */
 }
