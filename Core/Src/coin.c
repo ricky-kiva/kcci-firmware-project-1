@@ -3,7 +3,7 @@
 #include "ssd1306_fonts.h"
 #include "cmsis_os.h"
 
-#define COIN_RADIUS 22
+#define COIN_RADIUS 17
 #define CENTER_X 64
 #define CENTER_Y 32
 

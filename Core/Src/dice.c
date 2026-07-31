@@ -3,20 +3,20 @@
 #include <stdlib.h>
 #include "cmsis_os.h"
 
-#define DICE_SIZE 40
+#define DICE_SIZE 35
 
 void OLED_DrawDice(uint8_t value, int16_t offsetX, int16_t offsetY)
 {
-    int x = 44 + offsetX;
-    int y = 12 + offsetY;
+    int x = 46 + offsetX; 
+    int y = 14 + offsetY;
 
-    int xL = x + 10;
-    int xC = x + 20;
-    int xR = x + 30;
+    int xL = x + 9;
+    int xC = x + 17;
+    int xR = x + 25;
 
-    int yT = y + 10;
-    int yM = y + 20;
-    int yB = y + 30;
+    int yT = y + 9;
+    int yM = y + 17;
+    int yB = y + 25;
 
     ssd1306_DrawRectangle(x, y, x + DICE_SIZE, y + DICE_SIZE, White);
 
@@ -75,12 +75,20 @@ void OLED_AnimateDice(uint8_t final_value)
         int16_t animOffY = (rand() % (shakeIntensity + 1)) - (shakeIntensity / 2);
         
         OLED_DrawDice(tempFace, animOffX, animOffY);
+        
+        extern osMutexId I2CMutexHandle;
+        osMutexWait(I2CMutexHandle, osWaitForever);
         ssd1306_UpdateScreen();
+        osMutexRelease(I2CMutexHandle);
         
         osDelay(20 + (i * 6)); 
     }
     
     ssd1306_Fill(Black);
     OLED_DrawDice(final_value, 0, 0);
+    
+    extern osMutexId I2CMutexHandle;
+    osMutexWait(I2CMutexHandle, osWaitForever);
     ssd1306_UpdateScreen();
+    osMutexRelease(I2CMutexHandle);
 }

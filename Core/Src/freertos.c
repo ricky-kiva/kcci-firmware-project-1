@@ -269,13 +269,12 @@ void StartTaskSensor(void const * argument)
 {
   /* USER CODE BEGIN StartTaskSensor */
 	sensor_data_t sensor;
-	DHT_Status dht_st;
 
 	/* Infinite loop */
 	for (;;) {
     sensor = (sensor_data_t){0};
 
-		dht_st = DHT22_Read(&sensor.suhu, &sensor.kelembapan);
+		DHT22_Read(&sensor.suhu, &sensor.kelembapan);
 
 		HAL_ADC_Start(&hadc1);
 
@@ -448,10 +447,22 @@ void StartTaskDisplay(void const * argument)
 
     switch(currentPage) {
       case PAGE_DICE:
+        ssd1306_SetCursor(0, 0);
+        ssd1306_WriteString("DICE RNG", Font_6x8, White);
+
+        ssd1306_SetCursor(32, 56);
+        ssd1306_WriteString("Press ENC > Roll", Font_6x8, White);
+
         OLED_DrawDice((display.mode == MODE_DICE && display.value > 0) ? display.value : 1, 0, 0);
         break;
         
       case PAGE_COIN:
+        ssd1306_SetCursor(0, 0);
+        ssd1306_WriteString("COIN RNG", Font_6x8, White);
+
+        ssd1306_SetCursor(32, 56);
+        ssd1306_WriteString("Press ENC > Flip", Font_6x8, White);
+
         OLED_DrawCoin((display.mode == MODE_COIN) ? display.value : 0, 0);
         break;
 
