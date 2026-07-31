@@ -48,8 +48,7 @@ typedef enum {
 	PAGE_DICE = 0,
   PAGE_COIN,
 	PAGE_INFOS,
-  PAGE_HISTORY,
-  PAGE_HISTORY_ENC
+  PAGE_HISTORY
 } page_t;
 
 typedef enum {
@@ -113,6 +112,7 @@ QueueHandle_t EEPROMQueueHandle;
 volatile page_t currentPage = PAGE_DICE;
 volatile generator_mode_t currentMode = MODE_DICE;
 volatile animation_t currentAnimation = ANIM_NONE;
+volatile uint8_t show_encrypted = 0;
 
 eeprom_data_t history_cache[5];
 uint8_t history_count = 0;
@@ -389,6 +389,8 @@ void StartTaskRotaryPage(void const * argument)
       } else if (currentPage == PAGE_COIN) {
         currentMode = MODE_COIN;
         osSemaphoreRelease(RNGSemaphoreHandle);
+      } else if (currentPage == PAGE_HISTORY) {
+        show_encrypted = !show_encrypted;
       }
     }
 
@@ -396,16 +398,18 @@ void StartTaskRotaryPage(void const * argument)
     currentCount = __HAL_TIM_GET_COUNTER(&htim3);
 
     if (currentCount != lastCount) {
+      show_encrypted = 0;
+
       if ((int16_t)(currentCount - lastCount) > 0) {
         /* Clockwise */
         currentPage++;
 
-        if (currentPage > PAGE_HISTORY_ENC)
+        if (currentPage > PAGE_HISTORY)
           currentPage = PAGE_DICE;
       } else {
         /* Counter-clockwise */
         if (currentPage == PAGE_DICE)
-          currentPage = PAGE_HISTORY_ENC;
+          currentPage = PAGE_HISTORY;
         else
           currentPage--;
       }
@@ -496,20 +500,42 @@ void StartTaskDisplay(void const * argument)
         break;
       
       case PAGE_HISTORY:
-        ssd1306_WriteString("HISTORY (RNG)", Font_6x8, White);
-        for(int i = 0; i < history_count; i++) {
+        if (show_encrypted) {
+          ssd1306_WriteString("HISTORY (ENCRYPT-RAW)", Font_6x8, White);
+
+          for(int i = 0; i < history_count; i++) {
+            uint8_t raw[8] = {0};
+            raw[0] = (uint8_t)history_cache[i].mode;
+            raw[1] = history_cache[i].value;
+            raw[2] = (history_cache[i].timestamp >> 24) & 0xFF;
+            raw[3] = (history_cache[i].timestamp >> 16) & 0xFF;
+            raw[4] = (history_cache[i].timestamp >> 8) & 0xFF;
+            raw[5] = history_cache[i].timestamp & 0xFF;
+
+            for(int k = 0; k < 6; k++) {
+              raw[k] ^= SECRET_KEY[k];
+            }
+
+            sprintf(buf, "%d: %02X %02X %02X %02X %02X %02X", i+1, raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+            
+            ssd1306_SetCursor(0, 15 + (i * 9));
+            ssd1306_WriteString(buf, Font_6x8, White);
+          }
+        } else {
+          ssd1306_WriteString("HISTORY (RNG)", Font_6x8, White);
+          for(int i = 0; i < history_count; i++) {
             const char *m;
 
             switch (history_cache[i].mode) {
               case MODE_DICE:
-                  m = "Dice";
-                  break;
+                m = "Dice";
+                break;
               case MODE_COIN:
-                  m = "Coin";
-                  break;
+                m = "Coin";
+                break;
               default:
-                  m = "????";
-                  break;
+                m = "????";
+                break;
             }
 
             uint32_t total_seconds = history_cache[i].timestamp / 1000;
@@ -537,31 +563,9 @@ void StartTaskDisplay(void const * argument)
             
             ssd1306_SetCursor(0, 15 + (i * 9));
             ssd1306_WriteString(buf, Font_6x8, White);
+          }
         }
         break;
-
-        case PAGE_HISTORY_ENC:
-          ssd1306_WriteString("HISTORY (ENCRYPT-RAW)", Font_6x8, White);
-
-          for(int i = 0; i < history_count; i++) {
-            uint8_t raw[8] = {0};
-            raw[0] = (uint8_t)history_cache[i].mode;
-            raw[1] = history_cache[i].value;
-            raw[2] = (history_cache[i].timestamp >> 24) & 0xFF;
-            raw[3] = (history_cache[i].timestamp >> 16) & 0xFF;
-            raw[4] = (history_cache[i].timestamp >> 8) & 0xFF;
-            raw[5] = history_cache[i].timestamp & 0xFF;
-
-            for(int k = 0; k < 6; k++) {
-              raw[k] ^= SECRET_KEY[k];
-            }
-
-            sprintf(buf, "%d: %02X %02X %02X %02X %02X %02X", i+1, raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
-            
-            ssd1306_SetCursor(0, 15 + (i * 9));
-            ssd1306_WriteString(buf, Font_6x8, White);
-          }
-          break;
     }
 
     osMutexWait(I2CMutexHandle, osWaitForever);
