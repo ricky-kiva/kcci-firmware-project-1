@@ -1,0 +1,2 @@
+../Core/Src/coin.c:12:6:OLED_DrawCoin	2
+../Core/Src/coin.c:28:6:OLED_AnimateCoin	2

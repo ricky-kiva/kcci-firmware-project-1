@@ -32,6 +32,7 @@
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
 #include "dice.h"
+#include "coin.h"
 
 /* USER CODE END Includes */
 
@@ -44,7 +45,8 @@ typedef enum {
 } DHT_Status;
 
 typedef enum {
-	PAGE_GENERATOR = 0,
+	PAGE_DICE = 0,
+  PAGE_COIN,
 	PAGE_SEED,
 	PAGE_SENSOR,
   PAGE_HISTORY
@@ -107,7 +109,7 @@ QueueHandle_t SensorQueueHandle;
 QueueHandle_t DisplayQueueHandle;
 QueueHandle_t EEPROMQueueHandle;
 
-volatile page_t currentPage = PAGE_GENERATOR;
+volatile page_t currentPage = PAGE_DICE;
 volatile generator_mode_t currentMode = MODE_DICE;
 volatile animation_t currentAnimation = ANIM_NONE;
 
@@ -378,7 +380,11 @@ void StartTaskRotaryPage(void const * argument)
     GPIO_PinState button = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 
     if (lastButton == GPIO_PIN_SET && button == GPIO_PIN_RESET) {
-      if (currentPage == PAGE_GENERATOR) {
+      if (currentPage == PAGE_DICE) {
+        currentMode = MODE_DICE;
+        osSemaphoreRelease(RNGSemaphoreHandle);
+      } else if (currentPage == PAGE_COIN) {
+        currentMode = MODE_COIN;
         osSemaphoreRelease(RNGSemaphoreHandle);
       }
     }
@@ -392,10 +398,10 @@ void StartTaskRotaryPage(void const * argument)
         currentPage++;
 
         if (currentPage > PAGE_HISTORY)
-          currentPage = PAGE_GENERATOR;
+          currentPage = PAGE_DICE;
       } else {
         /* Counter-clockwise */
-        if (currentPage == PAGE_GENERATOR)
+        if (currentPage == PAGE_DICE)
           currentPage = PAGE_HISTORY;
         else
           currentPage--;
@@ -430,8 +436,11 @@ void StartTaskDisplay(void const * argument)
     xQueuePeek(DisplayQueueHandle, &display, 0);
     xQueuePeek(SensorQueueHandle, &sensor, 0);
 
-    if (currentAnimation == ANIM_DICE && currentPage == PAGE_GENERATOR) {
+    if (currentAnimation == ANIM_DICE && currentPage == PAGE_DICE) {
       OLED_AnimateDice(display.value);
+      currentAnimation = ANIM_NONE;
+    } else if (currentAnimation == ANIM_COIN && currentPage == PAGE_COIN) {
+      OLED_AnimateCoin(display.value);
       currentAnimation = ANIM_NONE;
     }
 
@@ -439,10 +448,12 @@ void StartTaskDisplay(void const * argument)
 	  ssd1306_SetCursor(0, 0);
 
     switch(currentPage) {
-      case PAGE_GENERATOR:
-        if (display.mode == MODE_DICE) {
-          OLED_DrawDice(display.value, 0, 0);
-        }
+      case PAGE_DICE:
+        OLED_DrawDice((display.mode == MODE_DICE && display.value > 0) ? display.value : 1, 0, 0);
+        break;
+        
+      case PAGE_COIN:
+        OLED_DrawCoin((display.mode == MODE_COIN) ? display.value : 0, 0);
         break;
 
       case PAGE_SEED:
