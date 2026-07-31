@@ -48,7 +48,8 @@ typedef enum {
 	PAGE_DICE = 0,
   PAGE_COIN,
 	PAGE_INFOS,
-  PAGE_HISTORY
+  PAGE_HISTORY,
+  PAGE_HISTORY_ENC
 } page_t;
 
 typedef enum {
@@ -98,6 +99,7 @@ typedef struct {
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+
 extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim3;
@@ -114,6 +116,9 @@ volatile animation_t currentAnimation = ANIM_NONE;
 
 eeprom_data_t history_cache[5];
 uint8_t history_count = 0;
+
+// SAMPLE SECRET KEY
+const uint8_t SECRET_KEY[8] = {0x5A, 0x3C, 0x7E, 0x18, 0x42, 0x81, 0xBD, 0xE7};
 
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
@@ -395,12 +400,12 @@ void StartTaskRotaryPage(void const * argument)
         /* Clockwise */
         currentPage++;
 
-        if (currentPage > PAGE_HISTORY)
+        if (currentPage > PAGE_HISTORY_ENC)
           currentPage = PAGE_DICE;
       } else {
         /* Counter-clockwise */
         if (currentPage == PAGE_DICE)
-          currentPage = PAGE_HISTORY;
+          currentPage = PAGE_HISTORY_ENC;
         else
           currentPage--;
       }
@@ -534,6 +539,29 @@ void StartTaskDisplay(void const * argument)
             ssd1306_WriteString(buf, Font_6x8, White);
         }
         break;
+
+        case PAGE_HISTORY_ENC:
+          ssd1306_WriteString("HISTORY (ENCRYPT-RAW)", Font_6x8, White);
+
+          for(int i = 0; i < history_count; i++) {
+            uint8_t raw[8] = {0};
+            raw[0] = (uint8_t)history_cache[i].mode;
+            raw[1] = history_cache[i].value;
+            raw[2] = (history_cache[i].timestamp >> 24) & 0xFF;
+            raw[3] = (history_cache[i].timestamp >> 16) & 0xFF;
+            raw[4] = (history_cache[i].timestamp >> 8) & 0xFF;
+            raw[5] = history_cache[i].timestamp & 0xFF;
+
+            for(int k = 0; k < 6; k++) {
+              raw[k] ^= SECRET_KEY[k];
+            }
+
+            sprintf(buf, "%d: %02X %02X %02X %02X %02X %02X", i+1, raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+            
+            ssd1306_SetCursor(0, 15 + (i * 9));
+            ssd1306_WriteString(buf, Font_6x8, White);
+          }
+          break;
     }
 
     osMutexWait(I2CMutexHandle, osWaitForever);
@@ -588,6 +616,10 @@ void StartTaskEEPROM(void const * argument)
     HAL_I2C_Mem_Read(&hi2c1, EEPROM_ADDR, 8 + (read_idx * 8), I2C_MEMADD_SIZE_8BIT, read_buf, 8, 100);
     osMutexRelease(I2CMutexHandle);
 
+    for(int k = 0; k < 8; k++) {
+      read_buf[k] ^= SECRET_KEY[k];
+    }
+
     history_cache[i].mode = (generator_mode_t)read_buf[0];
     history_cache[i].value = read_buf[1];
     history_cache[i].timestamp = ((uint32_t)read_buf[2] << 24) | ((uint32_t)read_buf[3] << 16) | ((uint32_t)read_buf[4] << 8) | read_buf[5];
@@ -603,6 +635,10 @@ void StartTaskEEPROM(void const * argument)
       write_buf[3] = (eeprom.timestamp >> 16) & 0xFF;
       write_buf[4] = (eeprom.timestamp >> 8) & 0xFF;
       write_buf[5] = eeprom.timestamp & 0xFF;
+
+      for(int k = 0; k < 8; k++) {
+        write_buf[k] ^= SECRET_KEY[k];
+      }
 
       uint16_t mem_addr = 8 + (current_index * 8);
 
