@@ -121,8 +121,10 @@ osThreadId RNGTaskHandle;
 osThreadId RotaryPageTaskHandle;
 osThreadId DisplayTaskHandle;
 osThreadId EEPROMTaskHandle;
+osThreadId BuzzerTaskHandle;
 osMutexId I2CMutexHandle;
 osSemaphoreId RNGSemaphoreHandle;
+osSemaphoreId BuzzerSemaphoreHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -140,6 +142,7 @@ void StartTaskRNG(void const * argument);
 void StartTaskRotaryPage(void const * argument);
 void StartTaskDisplay(void const * argument);
 void StartTaskEEPROM(void const * argument);
+void StartTaskBuzzer(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -182,6 +185,10 @@ void MX_FREERTOS_Init(void) {
   osSemaphoreDef(RNGSemaphore);
   RNGSemaphoreHandle = osSemaphoreCreate(osSemaphore(RNGSemaphore), 1);
 
+  /* definition and creation of BuzzerSemaphore */
+  osSemaphoreDef(BuzzerSemaphore);
+  BuzzerSemaphoreHandle = osSemaphoreCreate(osSemaphore(BuzzerSemaphore), 1);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 	/* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -222,6 +229,10 @@ void MX_FREERTOS_Init(void) {
   /* definition and creation of EEPROMTask */
   osThreadDef(EEPROMTask, StartTaskEEPROM, osPriorityBelowNormal, 0, 256);
   EEPROMTaskHandle = osThreadCreate(osThread(EEPROMTask), NULL);
+
+  /* definition and creation of BuzzerTask */
+  osThreadDef(BuzzerTask, StartTaskBuzzer, osPriorityBelowNormal, 0, 128);
+  BuzzerTaskHandle = osThreadCreate(osThread(BuzzerTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
@@ -298,22 +309,7 @@ void StartTaskRNG(void const * argument)
   for(;;)
   {
     osSemaphoreWait(RNGSemaphoreHandle, osWaitForever);
-
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-
-    __HAL_TIM_SET_AUTORELOAD(&htim2, 1000);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 500); 
-    osDelay(40);
-
-    __HAL_TIM_SET_AUTORELOAD(&htim2, 750);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 375); 
-    osDelay(40);
-
-    __HAL_TIM_SET_AUTORELOAD(&htim2, 500);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 250); 
-    osDelay(80);
-
-    HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_3);
+    osSemaphoreRelease(BuzzerSemaphoreHandle);
 
     xQueuePeek(SensorQueueHandle, &sensor, portMAX_DELAY);
 
@@ -602,6 +598,40 @@ void StartTaskEEPROM(void const * argument)
     }
   }
   /* USER CODE END StartTaskEEPROM */
+}
+
+/* USER CODE BEGIN Header_StartTaskBuzzer */
+/**
+* @brief Function implementing the BuzzerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskBuzzer */
+void StartTaskBuzzer(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskBuzzer */
+  /* Infinite loop */
+  for(;;)
+  {
+    osSemaphoreWait(BuzzerSemaphoreHandle, osWaitForever);
+
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
+
+    __HAL_TIM_SET_AUTORELOAD(&htim2, 1000);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 500); 
+    osDelay(40);
+
+    __HAL_TIM_SET_AUTORELOAD(&htim2, 750);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 375); 
+    osDelay(40);
+
+    __HAL_TIM_SET_AUTORELOAD(&htim2, 500);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 250); 
+    osDelay(80);
+
+    HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_3);
+  }
+  /* USER CODE END StartTaskBuzzer */
 }
 
 /* Private application code --------------------------------------------------*/
